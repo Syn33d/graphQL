@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Content {
+  id            String    @id @default(uuid())
+  typeId        String
+  type          Type      @relation(fields: [typeId], references: [id])
+  title         String
+  description   String
+  seasons       Int
+  episodes      Int
+  categoryId    String
+  categories    Category[] 
+  isInList      Boolean
+  isPublished   Boolean
+  datePublished DateTime
+  LikedContent LikedContent[]
+  List List[]
+}
+
+model LikedContent {
+  profileId String @id @default(uuid())
+  content   Content[]
+}
+
+model List {
+  profileId String @id @default(uuid())
+  content   Content[]
+  Profile Profile[]
+}
+
+model Account {
+  id            String    @id @default(uuid())
+  firstName     String
+  lastName      String
+  password      String
+  email         String
+  phoneNumber   String
+  profiles      Profile[]
+}
+
+model Profile {
+  id          String    @id @default(uuid())
+  name        String
+  avatar      String
+  isKid      Boolean
+  list        List[]
+
+  accountId   String
+  account     Account   @relation(fields: [accountId], references: [id])
+}
+
+model Category {
+  id      String    @id @default(uuid())
+  name    String
+  content Content[]
+}
+
+model Type {
+  id      String    @id @default(uuid())
+  name    String
+  content Content[]
+}
