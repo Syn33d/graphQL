@@ -2,8 +2,18 @@ import { ApolloServer } from '@apollo/server'; // preserve-line
 import { startStandaloneServer } from '@apollo/server/standalone'; // preserve-line
 import { PrismaClient } from '@prisma/client'; 
 import  Dataloader  from 'dataloader'; // preserve-line 
+import { create } from 'domain';
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import { expressMiddleware } from '@apollo/server/express4';
 
 const prisma = new PrismaClient();
+
+declare module 'express-serve-static-core' {
+    interface Request {
+        authenticated: boolean;
+    }
+}
 
 // A schema is a collection of type definitions (hence "typeDefs")
 // that together define the "shape" of queries that are executed against
@@ -71,6 +81,24 @@ const typeDefs = `#graphql
         id: String!
         name: String!
         content: [Content!]!
+    }
+
+    type Mutation {
+        # createContent(
+        #     type: String!, 
+        #     title: String!, 
+        #     description: String!, 
+        #     seasons: Int!, 
+        #     episodes: Int!, 
+        #     categoryId: String!, 
+        #     isInList: Boolean!, 
+        #     isPublished: Boolean!, 
+        #     datePublished: Date!
+        # ): Content!
+    
+        createType(
+            name: String!
+        ): Type!
     }
 
     type Query {
@@ -283,13 +311,22 @@ const accountById = new Dataloader(async (ids: string[]) => {
 // const booksByCategoryId = new Dataloader(async (categoryIds: string[]) => {
 //     const books = await prisma.book.findMany({ where: { categoryId: { in: categoryIds } } });
 //     return categoryIds.map(categoryId => books.filter(book => book.categoryId === categoryId));
-// });
+// });                    
+
+function wrapResolverWithAuthenticator(resolver) {
+    return (parent, args, context, info) => {
+        if (!context.authenticated) {
+            throw new Error('Not authenticated');
+        }
+        return resolver(parent, args, context, info);
+    };
+}
 
 // Resolvers define how to fetch the types defined in your schema.
 // This resolver retrieves books from the "books" array above.
 const resolvers = {
     Query: {
-        content: async () => await prisma.content.findMany(),
+        content: wrapResolverWithAuthenticator(() => prisma.content.findMany()),
         contentByCategoryId: async (_, { id }) => await contentByCategoryId.load(id),
         contentByTypeId: async (_, { id }) => await contentByTypeId.load(id),
         likedContent: async () => await prisma.likedContent.findMany(),
@@ -334,17 +371,41 @@ const resolvers = {
         content: async ({ id }) => await contentByTypeId.load(id),
     },
    
-    // Mutation: {
-    //     createBook: async (_, { title, authorId, categoryId }) => {
-    //         return await prisma.book.create({
-    //             data: {
-    //                 title,
-    //                 authorId,
-    //                 categoryId,
-    //             },
-    //         });
-    //     },
-    // },
+    Mutation: {
+        // createBook: async (_, { title, authorId, categoryId }) => {
+        //     return await prisma.book.create({
+        //         data: {
+        //             title,
+        //             authorId,
+        //             categoryId,
+        //         },
+        //     });
+        // },
+
+        // createContent: async (_, { type, title, description, seasons, episodes, categoryId, isInList, isPublished, datePublished }) => {
+        //     return await prisma.content.create({
+        //         data: {
+        //             type,
+        //             title,
+        //             description,
+        //             seasons,
+        //             episodes,
+        //             categoryId,
+        //             isInList,
+        //             isPublished,
+        //             datePublished,
+        //         },
+        //     });
+        // }
+
+        createType: async (_, { name }) => {
+            return await prisma.type.create({
+                data: {
+                    name,
+                },
+            });
+        },
+    },
 };
 
 // The ApolloServer constructor requires two parameters: your schema
@@ -358,8 +419,45 @@ const server = new ApolloServer({
 //  1. creates an Express app
 //  2. installs your ApolloServer instance as middleware
 //  3. prepares your app to handle incoming requests
-const { url } = await startStandaloneServer(server, {
-listen: { port: 4000 },
+await server.start();
+
+const app = express();
+
+app.use(cookieParser('mysecret', {
+    sameSite: 'strict',
+    httpOnly: true,
+    // secure: true,
+    signed: true,
+}));
+
+app.get('/login', (req, res) => {
+    res.cookie('mycookie', 'myvalue', {
+        signed: true,
+        httpOnly: true,
+        sameSite: 'strict',
+    });
+    res.send('Logged in');
 });
 
-console.log(`🚀  Server ready at: ${url}`);
+app.use((req, res, next) => {
+    if(req.signedCookies.mycookie) {
+        req.authenticated = true;
+    }
+    next();
+});
+
+app.use(
+    `/graphql` , 
+    express.json(), 
+    expressMiddleware(server, {
+        context:  async ({ req }) => {
+            return {
+                authenticated: req.authenticated,
+            };
+        },
+    })
+);
+
+app.listen(4000, () => {
+    console.log(`🚀 Server ready at http://localhost:4000/graphql`);
+});
